@@ -185,68 +185,72 @@ export default function App() {
 
   const fileInputRef = useRef(null);
 
-  // --- 1. AUTHENTICATION & REDIRECT HANDLING ---
-  useEffect(() => {
-    const handleAuth = async () => {
-      // 1. Kiểm tra xem có phải vừa redirect về không
-      try {
-        const result = await getRedirectResult(auth);
-        if (result) {
-          console.log("Redirect login success:", result.user);
-          // Không cần làm gì thêm, onAuthStateChanged sẽ bắt được user
-          return;
-        }
-      } catch (error) {
-        console.error("Redirect login failed:", error);
-        setAuthError(error.message); // Hiển thị lỗi cho user
-      }
+      // --- 1. AUTHENTICATION & REDIRECT HANDLING ---
+    useEffect(() => {
+      let unsubscribe = () => {};
 
-      // 2. Nếu không phải redirect và chưa có user, login ẩn danh để app chạy được
-      if (!auth.currentUser) {
+      const initAuth = async () => {
+        // 1️⃣ Xử lý kết quả redirect (Google Login)
         try {
-          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-            await signInWithCustomToken(auth, __initial_auth_token);
-          } else {
-            // Chỉ login ẩn danh nếu chưa có user nào (tránh ghi đè khi đang load)
-            await signInAnonymously(auth);
+          const result = await getRedirectResult(auth);
+          if (result) {
+            console.log("Google redirect success:", result.user);
           }
-        } catch (err) {
-          console.error("Anonymous auth failed:", err);
+        } catch (error) {
+          console.error("Redirect login failed:", error);
+          setAuthError(error.message);
         }
-      }
-    };
 
-    handleAuth();
+        // 2️⃣ Lắng nghe trạng thái auth (CHỈ 1 NƠI DUY NHẤT)
+        unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+          if (currentUser) {
+            setUser(currentUser);
+            setIsLoadingDB(false);
+            return;
+          }
 
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      if (!currentUser) setIsLoadingDB(false);
-    });
-    return () => unsubscribe();
-  }, []);
+          // 3️⃣ Chỉ login anonymous NẾU THỰC SỰ CHƯA CÓ USER
+          try {
+            const anon = await signInAnonymously(auth);
+            setUser(anon.user);
+            setIsLoadingDB(false);
+          } catch (err) {
+            console.error("Anonymous auth failed:", err);
+          }
+        });
+      };
 
-  // --- GOOGLE LOGIN (REDIRECT) ---
+      initAuth();
+      return () => unsubscribe();
+    }, []);
+
+// Google login
   const handleGoogleLogin = async () => {
-    setAuthError(null);
-    const provider = new GoogleAuthProvider();
-    try {
-      // Dùng redirect thay vì popup
-      await signInWithRedirect(auth, provider);
-    } catch (error) {
-      console.error("Google Login Error:", error);
-      setAuthError(error.message);
-    }
-  };
+  setAuthError(null);
+  const provider = new GoogleAuthProvider();
 
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      // Sau khi logout, quay lại chế độ ẩn danh để dùng tiếp
-      await signInAnonymously(auth); 
-    } catch (error) {
-      console.error("Logout Error:", error);
+  try {
+    if (auth.currentUser && auth.currentUser.isAnonymous) {
+      // LINK anonymous → Google (GIỮ DATA)
+      await linkWithRedirect(auth.currentUser, provider);
+    } else {
+      await signInWithRedirect(auth, provider);
     }
-  };
+  } catch (error) {
+    console.error("Google Login Error:", error);
+    setAuthError(error.message);
+  }
+};
+
+const handleLogout = async () => {
+  try {
+    await signOut(auth);
+    // KHÔNG login anonymous ở đây
+    // onAuthStateChanged sẽ tự xử lý
+  } catch (error) {
+    console.error("Logout Error:", error);
+  }
+};
 
   // --- 2. DATA SYNC ---
   useEffect(() => {
